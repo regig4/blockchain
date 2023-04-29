@@ -1,14 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
-  "encoding/base64"
-  "encoding/gob"
-  "bytes"
 )
 
 type Blockchain[T hashable] struct {
@@ -69,11 +70,15 @@ func (node MerkleNode[T]) computeHash() string {
 }
 
 type Transaction struct {
-	data string
+	from     string
+	to       string
+	value    int
+	currency string
 }
 
 func (t Transaction) getHash() string {
-	var hash = sha256.Sum256([]byte(t.data))
+	toJoin := []string{t.from, t.to, fmt.Sprint(t.value), t.currency}
+	var hash = sha256.Sum256([]byte(strings.Join(toJoin, ",")))
 	hash = sha256.Sum256(hash[:])
 	return toHex(hash[:])
 }
@@ -87,19 +92,18 @@ func (b *Block[T]) mine(difficulty int) {
 	for !strings.HasPrefix(b.hash, strings.Repeat("0", difficulty)) {
 		b.nonce++
 		b.hash = b.computeHash()
-    fmt.Println(fmt.Sprint(b.nonce, ": ", b.hash))
 	}
 }
 
 func (b *Blockchain[T]) addBlock(block Block[T]) {
-  var stringDefaultValue string
-  if block.hash == stringDefaultValue {
+	var stringDefaultValue string
+	if block.hash == stringDefaultValue {
 		block.mine(b.difficulty)
 	}
 
 	block.timestamp = time.Now()
-  
-  var defaultValue Block[T]
+
+	var defaultValue Block[T]
 
 	if b.genesis == defaultValue {
 		b.genesis = block
@@ -111,31 +115,76 @@ func (b *Blockchain[T]) addBlock(block Block[T]) {
 
 // go binary encoder
 func ToGOB64(blockchain Blockchain[Transaction]) string {
-    b := bytes.Buffer{}
-    e := gob.NewEncoder(&b)
-    err := e.Encode(blockchain)
-    if err != nil { fmt.Println(`failed gob Encode`, err) }
-    return base64.StdEncoding.EncodeToString(b.Bytes())
+	b := bytes.Buffer{}
+	e := gob.NewEncoder(&b)
+	err := e.Encode(blockchain)
+	if err != nil {
+		fmt.Println(`failed gob Encode`, err)
+	}
+	return base64.StdEncoding.EncodeToString(b.Bytes())
 }
 
 // go binary decoder
 func FromGOB64(str string) Blockchain[Transaction] {
-    m := Blockchain[Transaction]{}
-    by, err := base64.StdEncoding.DecodeString(str)
-    if err != nil { fmt.Println(`failed base64 Decode`, err); }
-    b := bytes.Buffer{}
-    b.Write(by)
-    d := gob.NewDecoder(&b)
-    err = d.Decode(&m)
-    if err != nil { fmt.Println(`failed gob Decode`, err); }
-    return m
+	m := Blockchain[Transaction]{}
+	by, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		fmt.Println(`failed base64 Decode`, err)
+	}
+	b := bytes.Buffer{}
+	b.Write(by)
+	d := gob.NewDecoder(&b)
+	err = d.Decode(&m)
+	if err != nil {
+		fmt.Println(`failed gob Decode`, err)
+	}
+	return m
+}
+
+type MaxPaymentsHolder struct {
+	maxPayments []int
+}
+
+func getMaxPayments(b Blockchain[Transaction], n int) []int {
+	var maxPayments = []int{}
+	result := MaxPaymentsHolder{maxPayments}
+	for _, value := range b.chain {
+		Dfs(*value.merkleRoot, &result, n)
+	}
+	return result.maxPayments
+}
+
+func Dfs(node MerkleNode[Transaction], maxPayments *MaxPaymentsHolder, n int) {
+	if node.data == nil {
+		Dfs(*node.left, maxPayments, n)
+		Dfs(*node.right, maxPayments, n)
+	} else {
+		for _, tran := range node.data {
+			if len(maxPayments.maxPayments) < n {
+				maxPayments.maxPayments = append(maxPayments.maxPayments, tran.value)
+				sort.Ints(maxPayments.maxPayments)
+				for i, j := 0, len(maxPayments.maxPayments)-1; i < j; i, j = i+1, j-1 {
+					maxPayments.maxPayments[i], maxPayments.maxPayments[j] = maxPayments.maxPayments[j], maxPayments.maxPayments[i]
+				}
+			} else {
+				if maxPayments.maxPayments[len(maxPayments.maxPayments)-1] < tran.value {
+					maxPayments.maxPayments = append(maxPayments.maxPayments, tran.value)
+				}
+				sort.Ints(maxPayments.maxPayments)
+				for i, j := 0, len(maxPayments.maxPayments)-1; i < j; i, j = i+1, j-1 {
+					maxPayments.maxPayments[i], maxPayments.maxPayments[j] = maxPayments.maxPayments[j], maxPayments.maxPayments[i]
+				}
+				maxPayments.maxPayments = maxPayments.maxPayments[:n]
+			}
+		}
+	}
 }
 
 func main() {
-	a := Transaction{"a"}
-	b := Transaction{"b"}
-	c := Transaction{"c"}
-	d := Transaction{"d"}
+	a := Transaction{"a", "b", 10, "USD"}
+	b := Transaction{"b", "a", 5, "USD"}
+	c := Transaction{"a", "c", 15, "USD"}
+	d := Transaction{"c", "b", 6, "USD"}
 	leftNode := MerkleNode[Transaction]{}
 	leftNode.data = []Transaction{a, b}
 	rightNode := MerkleNode[Transaction]{}
@@ -146,9 +195,10 @@ func main() {
 	block := new(Block[Transaction])
 	block.merkleRoot = &rootNode
 	blockchain := Blockchain[Transaction]{}
-  blockchain.difficulty = 3
-  blockchain.addBlock(*block)
-  serialized := ToGOB64(blockchain)
-  deserialized := FromGOB64(serialized)
-  fmt.Println(deserialized.chain[len(blockchain.chain)-1].nonce)
+	blockchain.difficulty = 3
+	blockchain.addBlock(*block)
+	//getMaxPayments(blockchain, 3)
+	for _, val := range getMaxPayments(blockchain, 3) {
+		fmt.Println(fmt.Sprint(val))
+	}
 }
