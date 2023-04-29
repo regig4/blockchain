@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -181,6 +183,16 @@ func Dfs(node MerkleNode[Transaction], maxPayments *MaxPaymentsHolder, n int) {
 }
 
 func main() {
+
+	blockchain := CreateBlockchain()
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		handleGetMaxPayments(w, r, blockchain)
+	})
+	http.ListenAndServe(":1000", nil)
+}
+
+func CreateBlockchain() Blockchain[Transaction] {
 	a := Transaction{"a", "b", 10, "USD"}
 	b := Transaction{"b", "a", 5, "USD"}
 	c := Transaction{"a", "c", 15, "USD"}
@@ -197,8 +209,9 @@ func main() {
 	blockchain := Blockchain[Transaction]{}
 	blockchain.difficulty = 3
 	blockchain.addBlock(*block)
-	//getMaxPayments(blockchain, 3)
-	for _, val := range getMaxPayments(blockchain, 3) {
-		fmt.Println(fmt.Sprint(val))
-	}
+	return blockchain
+}
+
+func handleGetMaxPayments(w http.ResponseWriter, r *http.Request, b Blockchain[Transaction]) {
+	json.NewEncoder(w).Encode(getMaxPayments(b, 3))
 }
