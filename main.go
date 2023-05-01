@@ -39,16 +39,20 @@ type MerkleNode[T hashable] struct {
 	data  []T
 }
 
-func (block Block[T]) computeHash() string {
+func (block Block[T]) computeHash(ch chan string, difficulty int) {
 	if block.merkleRoot == nil {
-		return ""
+		return
 	}
 
 	hash := block.prevHash + block.timestamp.String() + fmt.Sprint(block.nonce)
 	hash += block.merkleRoot.computeHash()
 	tmpHash := sha256.Sum256([]byte(hash))
 	tmpHash = sha256.Sum256(tmpHash[:])
-	return toHex(tmpHash[:])
+	if strings.HasPrefix(toHex(tmpHash[:]), strings.Repeat("0", difficulty)) {
+    fmt.Println(toHex(tmpHash[:]))
+		ch <- toHex(tmpHash[:])
+    close(ch)
+	}
 }
 
 func (node MerkleNode[T]) computeHash() string {
@@ -91,10 +95,22 @@ func toHex(data []byte) string {
 
 func (b *Block[T]) mine(difficulty int) {
 	b.merkleRoot.hash = b.merkleRoot.computeHash()
-	for !strings.HasPrefix(b.hash, strings.Repeat("0", difficulty)) {
-		b.nonce++
-		b.hash = b.computeHash()
+	b.nonce = -1
+	ch := make(chan string)
+Loop:
+	for {
+		select {
+		case <-ch:
+			b.hash = <-ch
+			break Loop
+		default:
+			b.nonce++
+			go b.computeHash(ch, difficulty)
+		}
 	}
+
+	fmt.Print(b.hash)
+
 }
 
 func (b *Blockchain[T]) addBlock(block Block[T]) {
@@ -213,5 +229,5 @@ func CreateBlockchain() Blockchain[Transaction] {
 }
 
 func handleGetMaxPayments(w http.ResponseWriter, r *http.Request, b Blockchain[Transaction]) {
-	json.NewEncoder(w).Encode(getMaxPayments(b, 3))
+	json.NewEncoder(w).Encode(getMaxPayments(b, b.difficulty))
 }
